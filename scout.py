@@ -35,69 +35,118 @@ def run_whois(target):
     except Exception as e:
         return f"[!] WHOIS error: {str(e)}"
     
-    useful_lines = []
-    seen = set()
+    # Data structure to organize the WHOIS information
+    data = {
+        'domain': '',
+        'created': '',
+        'updated': '',
+        'expires': '',
+        'registrar': '',
+        'registrar_email': '',
+        'registrar_phone': '',
+        'owner': '',
+        'owner_email': '',
+        'owner_phone': '',
+        'owner_address': '',
+        'nameservers': [],
+        'dnssec': ''
+    }
     
-    keywords = [
-        "domain name", 
-        "registry domain",
-        "registrar", 
-        "creation date", 
-        "updated date", 
-        "registry expiry date",
-        "domain status",
-        "name server",
-        "dnssec",
-        "registrant",
-        "admin",
-        "tech",
-        "registry",
-        "country",
-        "address",
-        "status",
-        "last-modified",
-        "source",
-        "email",
-        "phone",
-        "e-mail",
-        "netname",
-        "netrange",
-        "inetnum",
-        "org",
-        "cidr"
-    ]
-    
+    # Extract information from WHOIS output
     for line in result.stdout.splitlines():
-        original_line = line.strip()
-        line_lower = original_line.lower()
+        line = line.strip()
+        if not line or ":" not in line:
+            continue
         
-        if ":" not in line_lower:
+        key, value = line.split(":", 1)
+        key = key.strip().lower()
+        value = value.strip()
+        
+        if not value:
             continue
             
-        parts = line_lower.split(":", 1)
-        field_name = parts[0].strip()
-        field_value = parts[1].strip() if len(parts) > 1 else ""
+        if key.startswith("domain name"):
+            data['domain'] = value
         
-        if not field_value:
-            continue
+        elif any(c in key for c in ["creation date", "created"]):
+            data['created'] = value
+        elif "updated date" in key:
+            data['updated'] = value
+        elif any(e in key for e in ["expiry date", "expiration date"]):
+            data['expires'] = value
             
-        is_useful = False
-        for keyword in keywords:
-            if field_name.startswith(keyword):
-                is_useful = True
-                break
+        elif key == "registrar":
+            data['registrar'] = value
+        elif "registrar abuse contact email" in key:
+            data['registrar_email'] = value
+        elif "registrar abuse contact phone" in key:
+            data['registrar_phone'] = value
+            
+        elif "registrant organization" in key or "registrant org" in key:
+            data['owner'] = value
+        elif "registrant email" in key:
+            data['owner_email'] = value
+        elif "registrant phone" in key:
+            data['owner_phone'] = value
+        elif "registrant street" in key:
+            address_parts = [value]
+            data['owner_address'] = value
+            
+        elif "registrant city" in key and 'owner_address' in data:
+            data['owner_address'] += f", {value}"
+        elif ("registrant state" in key or "registrant province" in key) and 'owner_address' in data:
+            data['owner_address'] += f", {value}"
+        elif ("registrant postal" in key or "registrant zip" in key) and 'owner_address' in data:
+            data['owner_address'] += f" {value}"
+        elif "registrant country" in key and 'owner_address' in data:
+            data['owner_address'] += f", {value}"
+            
+        elif "name server" in key:
+            if value.lower() not in [ns.lower() for ns in data['nameservers']]:
+                data['nameservers'].append(value)
                 
-        if not is_useful:
-            continue
-            
-        if line_lower not in seen:
-            seen.add(line_lower)
-            useful_lines.append(original_line)
+        elif key == "dnssec":
+            data['dnssec'] = value
     
-    if not useful_lines:
+    # Format the output
+    output = []
+    if data['domain']:
+        output.append(f"Domain:         {data['domain']}")
+    if data['created']:
+        output.append(f"Created:        {data['created']}")
+    if data['updated']:
+        output.append(f"Updated:        {data['updated']}")
+    if data['expires']:
+        output.append(f"Expires:        {data['expires']}")
+    if data['registrar']:
+        output.append(f"Registrar:      {data['registrar']}")
+    if data['registrar_email']:
+        output.append(f"Registrar Email:{data['registrar_email']}")
+    if data['registrar_phone']:
+        output.append(f"Registrar Phone:{data['registrar_phone']}")
+    if data['owner']:
+        output.append(f"Owner:          {data['owner']}")
+    if data['owner_email']:
+        output.append(f"Owner Email:    {data['owner_email']}")
+    if data['owner_phone']:
+        output.append(f"Owner Phone:    {data['owner_phone']}")
+    if data['owner_address']:
+        output.append(f"Owner Address:  {data['owner_address']}")
+    
+    # Add nameservers
+    if data['nameservers']:
+        ns_lines = [f"Nameservers:    {data['nameservers'][0]}"]
+        for ns in data['nameservers'][1:]:
+            ns_lines.append(f"                {ns}")
+        output.extend(ns_lines)
+    
+    if data['dnssec']:
+        output.append(f"DNSSEC:         {data['dnssec']}")
+    
+    if not output:
         return "[!] No useful WHOIS information found"
     
-    return "\n".join(useful_lines)
+    return "\n".join(output)
 
 # Dig
 def run_dig(target):
@@ -125,7 +174,7 @@ target = args.target
 
 # Detect if target is an IP address or domain
 target_is_ip = is_ip(target)
-target_type = "IP address" if is_ip(target) else "domain"
+target_type = "IP address" if target_is_ip else "domain"
 
 print(f"\nTarget {target_type}: {target}")
 print("\n=== WHOIS INFO ===")
