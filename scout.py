@@ -5,15 +5,19 @@ domain = input("Enter a domain: ")
 print(f"You entered: {domain}")
 
 # WHOIS
-whois_result = subprocess.run(["whois", domain], capture_output=True, text=True)
-
+def run_whois(domain):
+        result = subprocess.run(["whois", domain], capture_output=True, text=True)
+        return result.stdout
 # DIG
-dig_result = subprocess.run(["dig", domain, "+short"], capture_output=True, text=True)
-
+def run_dig(domain):
+        result = subprocess.run(["dig", domain, "+short"], capture_output=True, text=True)
+        return result.stdout
 # PING
-ping_result = subprocess.run(["ping", "-c","4", domain], capture_output=True, text=True)
+def run_ping(domain):
+        result = subprocess.run(["ping", "-c", "4", domain], capture_output=True, text=True)
+        return result.stdout
 
-print("\n=== WHOIS INFO ===")
-print(whois_result.stdout)
-print(dig_result.stdout)
-print(ping_result.stdout)
+print("\n=== INFO ===")
+print(run_whois(domain))
+print(run_dig(domain))
+print(run_ping(domain))
