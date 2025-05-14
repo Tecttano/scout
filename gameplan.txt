@@ -3,7 +3,7 @@ A CLI-native recon tool for Linux that takes a domain or IP and runs basic recon
 
 V1 Scope (Minimum Viable Tool):
 Input Handling (Python argparse)
-* Accept --domain or --ip
+* Accept --target or -t
 * Support --quick, --full, -o for output
 
 Modules to Build:
