@@ -2,22 +2,32 @@
 # 05/14/2025
 import subprocess
 import argparse
+import ipaddress
 
 parser = argparse.ArgumentParser(description="Scout - Basic Recon Tool")
 
 # Arguments
-# Domain
-parser.add_argument("-d", "--domain", help="Target domain name")
+# Target (IP or Domain)
+parser.add_argument("-t", "--target", required=True, help="Target domain name or IP address")
 # Full Scan
 parser.add_argument("-f", "--full", action="store_true", help="Run a full scan")
 # Output to File
-parser.add_argument("-o","--output", help="Save output to file")
+parser.add_argument("-o", "--output", help="Save output to file")
 
 # Functions
-# WHOIS
-def run_whois(domain):
+
+# Check if target is an IP
+def is_ip(target):
     try:
-        result = subprocess.run(["whois", domain], capture_output=True, text=True)
+        ipaddress.ip_address(target)
+        return True
+    except ValueError:
+        return False
+
+# WHOIS
+def run_whois(target):
+    try:
+        result = subprocess.run(["whois", target], capture_output=True, text=True)
         if result.returncode != 0:
             return f"[!] WHOIS command failed: {result.stderr}"
     except subprocess.TimeoutExpired:
@@ -41,7 +51,20 @@ def run_whois(domain):
         "registrant",
         "admin",
         "tech",
-        "registry"
+        "registry",
+        "country",
+        "address",
+        "status",
+        "last-modified",
+        "source",
+        "email",
+        "phone",
+        "e-mail",
+        "netname",
+        "netrange",
+        "inetnum",
+        "org",
+        "cidr"
     ]
     
     for line in result.stdout.splitlines():
@@ -76,41 +99,55 @@ def run_whois(domain):
     
     return "\n".join(useful_lines)
 
-# DIG
-def run_dig(domain):
-    result = subprocess.run(["dig", domain, "+short"], capture_output=True, text=True)
+# Dig
+def run_dig(target):
+    # For IPs, do a reverse lookup instead
+    if is_ip(target):
+        result = subprocess.run(["dig", "-x", target, "+short"], capture_output=True, text=True)
+        if not result.stdout.strip():
+            return "[!] No reverse DNS records found"
+        return result.stdout
+    else:
+        # For domains, do a forward lookup
+        result = subprocess.run(["dig", target, "+short"], capture_output=True, text=True)
+        if not result.stdout.strip():
+            return "[!] No DNS records found"
+        return result.stdout
+    
+# Ping
+def run_ping(target):
+    result = subprocess.run(["ping", "-c", "4", target], capture_output=True, text=True)
     return result.stdout
 
-# PING
-def run_ping(domain):
-    result = subprocess.run(["ping", "-c", "4", domain], capture_output=True, text=True)
-    return result.stdout
-
-# Parse
+# Parse arguments
 args = parser.parse_args()
-domain = args.domain
-if not domain:
-    print("You must provide a domain with -d or --domain")
-    exit()
+target = args.target
 
-print(f"\nYou entered: {domain}")
+# Detect if target is an IP address or domain
+target_is_ip = is_ip(target)
+target_type = "IP address" if is_ip(target) else "domain"
+
+print(f"\nTarget {target_type}: {target}")
 print("\n=== WHOIS INFO ===")
-print(run_whois(domain))
-print("\n=== DIG INFO ===")
-print(run_dig(domain))
+print(run_whois(target))
+
+# Use dig appropriately for IP or domain
+print(f"\n=== {'REVERSE DNS' if target_is_ip else 'DNS INFO'} ===")
+print(run_dig(target))
 
 if args.full:
     print("\n=== PING INFO ===")
-    print(run_ping(domain))
+    print(run_ping(target))
 
+# Save to file if requested
 if args.output:
     with open(args.output, "w") as f:
-        f.write(f"You entered: {domain}\n\n")
+        f.write(f"Target {target_type}: {target}\n\n")
         f.write("=== WHOIS INFO ===\n")
-        f.write(run_whois(domain))
-        f.write("\n=== DIG INFO ===\n")
-        f.write(run_dig(domain))
+        f.write(run_whois(target))
+        f.write(f"\n=== {'REVERSE DNS' if target_is_ip else 'DNS INFO'} ===\n")
+        f.write(run_dig(target))
         if args.full:
             f.write("\n=== PING INFO ===\n")
-            f.write(run_ping(domain))
+            f.write(run_ping(target))
     print(f"\nResults saved to {args.output}")
