@@ -1,0 +1,24 @@
+Goal:
+A CLI-native recon tool for Linux that takes a domain or IP and runs basic recon modules, outputs clean results to screen or file. Looks and acts like a real Linux tool, not a toy.
+
+V1 Scope (Minimum Viable Tool):
+Input Handling (Python argparse)
+* Accept --domain or --ip
+* Support --quick, --full, -o for output
+
+Modules to Build:
+* whois (domain info)
+* dig or DNS resolve (A/CNAME/NS/MX records)
+* ping (basic reachability)
+
+* nmap (top 1000 ports or specific ones)
+* http_headers (grab headers if HTTP is up)
+
+Output:
+* Clean terminal output (colored later)
+* Optional save to output.txt
+
+Structure:
+* scout.py as main file
+* Folder modules/ with files like dns.py, scan.py, etc.
+* utils.py for shared stuff
