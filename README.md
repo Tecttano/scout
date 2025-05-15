@@ -1,45 +1,46 @@
-# scout
-scout is a lightweight Linux-native CLI recon tool that performs quick passive and active recon on domains or IPs
+# Scout
 
-Features-
+Scout is a lightweight Linux-native CLI recon tool that performs quick passive and active recon on domains or IPs.
 
-DNS records (A, NS, MX, TXT, SPF, SOA, CNAME, AAAA)
-WHOIS information
-Common port scanning
-HTTP headers analysis
-Ping statistics
-Traceroute mapping
-Parallel execution
+## Features
 
-Usage - 
+- DNS records (A, NS, MX, TXT, SPF, SOA, CNAME, AAAA)
+- WHOIS information
+- Common port scanning
+- HTTP headers analysis
+- Ping statistics
+- Traceroute mapping
+- Parallel execution
 
-python3 scout.py -t example.com            # Basic scan
-python3 scout.py -t 8.8.8.8 --ports        # Scan with port check
-python3 scout.py -t example.com -a         # All checks
-python3 scout.py -t domain.com -o results  # Save to file
-python3 scout.py -t example.com --json     # JSON output
+## Usage - 
 
-Options - 
+- python3 scout.py -t example.com            # Basic scan
+- python3 scout.py -t 8.8.8.8 --ports        # Scan with port check
+- python3 scout.py -t example.com -a         # All checks
+- python3 scout.py -t domain.com -o results  # Save to file
+- python3 scout.py -t example.com --json     # JSON output
 
--t, --target      Target domain/IP (required)
---passive         Passive checks only
---dns-info        All DNS records
---headers         HTTP headers
---ports           Scan common ports
---trace           Run traceroute
--a, --all         Run all checks
---profile         Scan profile (quick, passive, full)
--v, --verbose     Verbose output
---timeout         Timeout in seconds (default: 5)
---threads         Max threads (default: 10)
+## Options - 
 
-Requirements - 
+- -t, --target      Target domain/IP (required)
+- --passive         Passive checks only
+- --dns-info        All DNS records
+- --headers         HTTP headers
+- --ports           Scan common ports
+- --trace           Run traceroute
+- -a, --all         Run all checks
+- --profile         Scan profile (quick, passive, full)
+- -v, --verbose     Verbose output
+- --timeout         Timeout in seconds (default: 5)
+- --threads         Max threads (default: 10)
 
-Python 3.6+
-Standard Unix tools: dig, whois, ping, traceroute
+## Requirements - 
 
-Installation - 
+- Python 3.6+
+- Standard Unix tools: dig, whois, ping, traceroute
 
-git clone https://github.com/Tecttano/scout.git
-cd scout
-chmod +x scout.py
+## Installation - 
+
+- git clone https://github.com/Tecttano/scout.git
+- cd scout
+- chmod +x scout.py
