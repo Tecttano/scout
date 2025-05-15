@@ -1,7 +1,31 @@
-# .gitignore
+# Python bytecode
 __pycache__/
 *.py[cod]
 *$py.class
+
+# Virtual environments
 .env
 .venv
+env/
+venv/
+ENV/
+
+# Output files
+*.json
+*.txt
 output/
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Editor directories and files
+.idea/
+.vscode/
+*.swp
+*.swo
