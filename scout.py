@@ -5,15 +5,15 @@ import argparse
 import ipaddress
 import re
 import json
+import urllib.request
+import ssl
 
 parser = argparse.ArgumentParser(description="Scout - Basic Recon Tool")
 
-# Target (IP or Domain)
 parser.add_argument("-t", "--target", required=True, help="Target domain name or IP address")
-# Output to File
 parser.add_argument("-o", "--output", help="Save output to file")
-# JSON Output Format
 parser.add_argument("--json", action="store_true", help="Output in JSON format")
+parser.add_argument("--headers", action="store_true", help="Fetch and display HTTP response headers from the target")
 
 def is_ip(target):
     try:
@@ -147,7 +147,6 @@ def run_ping(target, count=4):
         
         text_output = f"Count: {count}\nAverage Latency: {avg_latency}ms\nPacket Loss: {packet_loss}%"
         
-        # Try to convert to numeric values for JSON
         try:
             latency_value = float(avg_latency)
         except (ValueError, TypeError):
@@ -164,6 +163,67 @@ def run_ping(target, count=4):
         error_msg = f"[!] Ping error: {str(e)}"
         return {"text": error_msg, "json": {}}
 
+def get_http_headers(target):
+    headers_text = []
+    headers_json = {"http": {}, "https": {}}
+    
+    # Using curl -I for header retrieval
+    try:
+        # HTTP headers
+        http_result = subprocess.run(["curl", "-I", "-m", "5", f"http://{target}"], 
+                                    capture_output=True, text=True)
+        
+        http_headers = {}
+        if http_result.returncode == 0:
+            for line in http_result.stdout.splitlines():
+                if ': ' in line:
+                    key, value = line.split(': ', 1)
+                    http_headers[key.lower()] = value
+            headers_json["http"] = http_headers
+        else:
+            headers_json["http"] = {"error": "Failed to retrieve HTTP headers"}
+    except Exception as e:
+        headers_json["http"] = {"error": str(e)}
+    
+    try:
+        # HTTPS headers
+        https_result = subprocess.run(["curl", "-I", "-m", "5", "-k", f"https://{target}"], 
+                                     capture_output=True, text=True)
+        
+        https_headers = {}
+        if https_result.returncode == 0:
+            for line in https_result.stdout.splitlines():
+                if ': ' in line:
+                    key, value = line.split(': ', 1)
+                    https_headers[key.lower()] = value
+            headers_json["https"] = https_headers
+        else:
+            headers_json["https"] = {"error": "Failed to retrieve HTTPS headers"}
+    except Exception as e:
+        headers_json["https"] = {"error": str(e)}
+    
+    # Combine headers from both HTTP and HTTPS
+    all_headers = {}
+    all_headers.update(headers_json["http"])
+    if "error" not in headers_json["http"]:
+        all_headers.update(headers_json["https"])
+    
+    # Format the output
+    for key, value in all_headers.items():
+        if key != "error":
+            headers_text.append(f"{key.title()}: {value}")
+    
+    if not headers_text and ("error" in headers_json["http"] or "error" in headers_json["https"]):
+        if "error" in headers_json["http"]:
+            headers_text.append(f"HTTP Error: {headers_json['http']['error']}")
+        if "error" in headers_json["https"]:
+            headers_text.append(f"HTTPS Error: {headers_json['https']['error']}")
+    
+    return {
+        "text": "\n".join(headers_text),
+        "json": headers_json
+    }
+
 args = parser.parse_args()
 target = args.target
 
@@ -172,7 +232,10 @@ whois_result = run_whois(target)
 dns_result = run_dns(target)
 ping_result = run_ping(target, count=4)
 
-# Prepare JSON output if needed
+headers_result = None
+if args.headers:
+    headers_result = get_http_headers(target)
+
 if args.json:
     json_data = {
         "target": target,
@@ -183,40 +246,50 @@ if args.json:
         "whois": whois_result["json"]
     }
     
-    # Print JSON to console
+    if args.headers and headers_result:
+        json_data["headers"] = headers_result["json"]
+    
     print(json.dumps(json_data, indent=None))
 else:
-    # Print formatted text output
     target_type = "IP Address" if is_ip(target) else "Domain"
     print(f"[TARGET]\n{target_type}: {target}")
     print(f"\n[Domain Info]\n{domain_info}")
     print(f"\n[Ping]\n{ping_result['text']}")
     print(f"\n[DNS]\n{dns_result['text']}")
     print(f"\n[WHOIS]\n{whois_result['summary']}")
+    
+    if args.headers and headers_result:
+        print(f"\n[HTTP Headers]\n{headers_result['text']}")
 
-# Save to file if requested
 if args.output:
     if args.json:
-        # Save as JSON
         json_data = {
             "target": target,
             "target_type": "ip" if is_ip(target) else "domain",
             "domain": domain_info,
             "ping": ping_result["json"],
             "dns": dns_result["json"],
-            "whois": whois_result["json"],
-            "whois_raw": whois_result["raw"]
+            "whois": whois_result["json"]
         }
+        
+        if args.headers and headers_result:
+            json_data["headers"] = headers_result["json"]
+            
+        json_data["whois_raw"] = whois_result["raw"]
+        
         with open(args.output, "w") as f:
             json.dump(json_data, f, indent=2)
     else:
-        # Save as formatted text
         target_type = "IP Address" if is_ip(target) else "Domain"
         full_output = f"[TARGET]\n{target_type}: {target}\n"
         full_output += f"\n[Domain Info]\n{domain_info}\n"
         full_output += f"[Ping]\n{ping_result['text']}\n"
         full_output += f"[DNS]\n{dns_result['text']}\n"
         full_output += f"[WHOIS]\n{whois_result['summary']}\n"
+        
+        if args.headers and headers_result:
+            full_output += f"[HTTP Headers]\n{headers_result['text']}\n"
+            
         full_output += f"[WHOIS Raw]\n{whois_result['raw']}"
         
         with open(args.output, "w") as f:
