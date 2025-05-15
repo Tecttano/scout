@@ -1,107 +1,71 @@
 #!/usr/bin/env python3
-# 05/14/2025
-import subprocess
-import argparse
-import ipaddress
-import re
-import json
-import urllib.request
-import ssl
+import subprocess, argparse, ipaddress, re, json, urllib.request, ssl
+from urllib.error import URLError
 
 parser = argparse.ArgumentParser(description="Scout - Basic Recon Tool")
-
-parser.add_argument("-t", "--target", required=True, help="Target domain name or IP address")
+parser.add_argument("-t", "--target", required=True, help="Target domain/IP")
 parser.add_argument("-o", "--output", help="Save output to file")
-parser.add_argument("--json", action="store_true", help="Output in JSON format")
-parser.add_argument("--headers", action="store_true", help="Fetch and display HTTP response headers from the target")
-parser.add_argument("--mx", action="store_true", help="Retrieve MX (mail exchange) records for the domain")
-parser.add_argument("--txt", action="store_true", help="Retrieve TXT records for the domain")
-parser.add_argument("--spf", action="store_true", help="Retrieve SPF records for the domain")
+parser.add_argument("--json", action="store_true", help="JSON output")
+parser.add_argument("--headers", action="store_true", help="HTTP headers")
+parser.add_argument("--dns-info", action="store_true", help="All DNS records")
+parser.add_argument("--mx", action="store_true", help="MX records")
+parser.add_argument("--txt", action="store_true", help="TXT records")
+parser.add_argument("--spf", action="store_true", help="SPF records")
+parser.add_argument("--soa", action="store_true", help="SOA records")
+parser.add_argument("--cname", action="store_true", help="CNAME records")
+parser.add_argument("--aaaa", action="store_true", help="AAAA (IPv6) records")
 
 def is_ip(target):
-    try:
-        ipaddress.ip_address(target)
-        return True
-    except ValueError:
-        return False
+    try: return bool(ipaddress.ip_address(target))
+    except ValueError: return False
+
+def run_cmd(cmd, err_msg="Command failed"):
+    try: return subprocess.run(cmd, capture_output=True, text=True, check=True).stdout
+    except: return err_msg
 
 def run_whois(target):
-    try:
-        result = subprocess.run(["whois", target], capture_output=True, text=True)
-        if result.returncode != 0:
-            return {"raw": f"[!] WHOIS command failed: {result.stderr}", 
-                    "summary": "[!] WHOIS command failed",
-                    "json": {}}
+    raw = run_cmd(["whois", target], "[!] WHOIS failed")
+    summary, json_data = {}, {}
+    
+    for line in raw.splitlines():
+        if not line.strip() or ":" not in line: continue
         
-        raw_output = result.stdout
-        whois_summary = {}
-        whois_json = {}
+        key, value = line.split(":", 1)
+        key, value = key.strip().lower(), value.strip()
+        if not value: continue
         
-        for line in raw_output.splitlines():
-            line = line.strip()
-            if not line or ":" not in line:
-                continue
-            
-            key, value = line.split(":", 1)
-            key = key.strip().lower()
-            value = value.strip()
-            
-            if not value:
-                continue
-            
-            if key.startswith("registrant org") or key.startswith("registrant organization"):
-                whois_summary['registrant'] = value
-                whois_json['registered_to'] = value
-            elif any(term in key for term in ["creation date", "created"]):
-                formatted_date = format_date(value)
-                whois_summary['created'] = formatted_date
-                whois_json['created'] = formatted_date
-            elif any(term in key for term in ["expiry date", "expiration date"]):
-                formatted_date = format_date(value)
-                whois_summary['expires'] = formatted_date
-                whois_json['expires'] = formatted_date
-            elif key == "registrar":
-                whois_summary['registrar'] = value
-                whois_json['registrar'] = value
-        
-        summary_lines = []
-        if 'registrant' in whois_summary:
-            summary_lines.append(f"Registered To: {whois_summary['registrant']}")
-        if 'created' in whois_summary:
-            summary_lines.append(f"Created: {whois_summary['created']}")
-        if 'expires' in whois_summary:
-            summary_lines.append(f"Expires: {whois_summary['expires']}")
-        if 'registrar' in whois_summary:
-            summary_lines.append(f"Registrar: {whois_summary['registrar']}")
-        
-        summary_output = "\n".join(summary_lines) if summary_lines else "[!] No WHOIS summary information found"
-        
-        return {"raw": raw_output, "summary": summary_output, "json": whois_json}
-    except Exception as e:
-        return {"raw": f"[!] WHOIS error: {str(e)}", 
-                "summary": f"[!] WHOIS error: {str(e)}",
-                "json": {}}
+        if "registrant org" in key or "registrant organization" in key:
+            summary['registrant'] = json_data['registered_to'] = value
+        elif any(x in key for x in ["creation date", "created"]):
+            date = format_date(value)
+            summary['created'] = json_data['created'] = date
+        elif any(x in key for x in ["expiry date", "expiration date"]):
+            date = format_date(value)
+            summary['expires'] = json_data['expires'] = date
+        elif key == "registrar":
+            summary['registrar'] = json_data['registrar'] = value
+    
+    lines = []
+    for k, label in [('registrant', 'Registered To'), ('created', 'Created'), 
+                     ('expires', 'Expires'), ('registrar', 'Registrar')]:
+        if k in summary: lines.append(f"{label}: {summary[k]}")
+    
+    summary_text = "\n".join(lines) or "[!] No WHOIS summary information found"
+    return {"raw": raw, "summary": summary_text, "json": json_data}
 
 def format_date(date_str):
-    if 'T' in date_str:
-        date_part = date_str.split('T')[0]
-        return date_part
-    elif ' ' in date_str and any(c.isdigit() for c in date_str):
-        parts = date_str.split(' ')
-        for part in parts:
-            if part.count('-') == 2 or part.count('/') == 2:
-                return part
+    if 'T' in date_str: return date_str.split('T')[0]
+    if ' ' in date_str and any(c.isdigit() for c in date_str):
+        for part in date_str.split(' '):
+            if part.count('-') == 2 or part.count('/') == 2: return part
     return date_str
 
 def run_dns(target):
-    try:
-        dns_info = []
-        dns_json = {"nameservers": []}
-        
-        a_result = subprocess.run(["dig", target, "A", "+short"], capture_output=True, text=True)
-        a_records = a_result.stdout.strip().split('\n')
-        a_records = [r for r in a_records if r and not r.endswith('.')]
-        
+    dns_info, dns_json = [], {"nameservers": []}
+    
+    a_result = run_cmd(["dig", target, "A", "+short"], "")
+    if a_result and not a_result.startswith("[!]"):
+        a_records = [line.strip() for line in a_result.splitlines() if line.strip()]
         if a_records:
             if len(a_records) == 1:
                 dns_info.append(f"A Record: {a_records[0]}")
@@ -109,184 +73,192 @@ def run_dns(target):
             else:
                 dns_info.append(f"A Records: {a_records[0]}")
                 dns_json["a_records"] = a_records
-                for record in a_records[1:]:
-                    if record:
-                        dns_info.append(f"           {record}")
-        
-        ns_result = subprocess.run(["dig", target, "NS", "+short"], capture_output=True, text=True)
-        ns_records = ns_result.stdout.strip().split('\n')
-        if any(ns_records):
-            cleaned_ns = [ns.rstrip('.') for ns in ns_records if ns]
-            if cleaned_ns:
-                ns_info = ", ".join(cleaned_ns)
-                dns_info.append(f"NS: {ns_info}")
-                dns_json["nameservers"] = cleaned_ns
-        
-        if args.mx and not is_ip(target):
-            mx_result = subprocess.run(["dig", target, "MX", "+short"], capture_output=True, text=True)
-            mx_records = mx_result.stdout.strip().split('\n')
+                for r in a_records[1:]: dns_info.append(f"           {r}")
+    
+    ns_result = run_cmd(["dig", target, "NS", "+short"], "")
+    if ns_result and not ns_result.startswith("[!]"):
+        ns_records = [line.strip().rstrip('.') for line in ns_result.splitlines() if line.strip()]
+        if ns_records:
+            dns_info.append(f"NS: {', '.join(ns_records)}")
+            dns_json["nameservers"] = ns_records
+    
+    if (args.mx or args.dns_info) and not is_ip(target):
+        mx_result = run_cmd(["dig", target, "MX", "+short"], "")
+        if mx_result and not mx_result.startswith("[!]"):
+            mx_lines = [line for line in mx_result.splitlines() if line.strip()]
             cleaned_mx = []
             
-            if any(mx_records):
-                for mx in mx_records:
-                    if mx:
-                        parts = mx.split(None, 1)
-                        if len(parts) > 1:
-                            mx_domain = parts[1].rstrip('.')
-                            cleaned_mx.append(mx_domain)
-                
-                if cleaned_mx:
-                    mx_info = ", ".join(cleaned_mx)
-                    dns_info.append(f"MX Records: {mx_info}")
-                    dns_json["mx_records"] = cleaned_mx
-        
-        if args.txt and not is_ip(target):
-            txt_result = subprocess.run(["dig", target, "TXT", "+short"], capture_output=True, text=True)
-            txt_records = txt_result.stdout.strip().split('\n')
-            cleaned_txt = []
+            for mx in mx_lines:
+                parts = mx.split()
+                if len(parts) > 1:
+                    mx_domain = parts[1].rstrip('.')
+                    cleaned_mx.append(f"{parts[0]} {mx_domain}")
             
-            if any(txt_records):
-                for txt in txt_records:
-                    if txt:
-                        cleaned_txt.append(txt.strip('"'))
-                
-                if cleaned_txt:
-                    dns_info.append(f"TXT Records:")
-                    for record in cleaned_txt:
-                        dns_info.append(f"  {record}")
-                    dns_json["txt_records"] = cleaned_txt
-        
-        if args.spf and not is_ip(target):
-            spf_result = subprocess.run(["dig", target, "TXT", "+short"], capture_output=True, text=True)
+            if cleaned_mx:
+                dns_info.append(f"MX Records:")
+                for mx in cleaned_mx:
+                    dns_info.append(f"  {mx}")
+                dns_json["mx_records"] = cleaned_mx
+        elif args.mx:
+            dns_info.append("No MX records found")
+    
+    if (args.txt or args.dns_info) and not is_ip(target):
+        txt_result = run_cmd(["dig", target, "TXT", "+short"], "")
+        if txt_result and not txt_result.startswith("[!]"):
+            txt_records = []
             spf_records = []
             
-            for line in spf_result.stdout.strip().split('\n'):
-                if 'v=spf1' in line.lower():
-                    spf_records.append(line.strip('"'))
+            for line in txt_result.splitlines():
+                if line.strip():
+                    clean_txt = line.strip('"')
+                    txt_records.append(clean_txt)
+                    if 'v=spf1' in line.lower() and (args.spf or args.dns_info):
+                        spf_records.append(clean_txt)
             
-            if spf_records:
-                dns_info.append(f"SPF Records:")
-                for record in spf_records:
+            if txt_records:
+                dns_info.append(f"TXT Records:")
+                for record in txt_records:
                     dns_info.append(f"  {record}")
-                dns_json["spf_records"] = spf_records
-        
-        if is_ip(target):
-            dns_info.append("Target is an IP address, running reverse DNS lookup...")
-            ptr_result = subprocess.run(["dig", "-x", target, "+short"], capture_output=True, text=True)
-            ptr_record = ptr_result.stdout.strip().rstrip('.')
-            if ptr_record:
-                dns_info.append(f"PTR: {ptr_record}")
-                dns_json["ptr"] = ptr_record
-        
-        formatted_output = "\n".join(dns_info) if dns_info else "[!] No DNS records found"
-        return {"text": formatted_output, "json": dns_json}
-    except Exception as e:
-        error_msg = f"[!] DNS lookup error: {str(e)}"
-        return {"text": error_msg, "json": {}}
+                dns_json["txt_records"] = txt_records
+            
+            if (args.spf or args.dns_info):
+                if spf_records:
+                    dns_info.append(f"SPF Records:")
+                    for record in spf_records:
+                        dns_info.append(f"  {record}")
+                    dns_json["spf_records"] = spf_records
+                elif args.spf:
+                    dns_info.append("No SPF records found")
+        elif args.txt:
+            dns_info.append("No TXT records found")
+    
+    if (args.soa or args.dns_info) and not is_ip(target):
+        soa_result = run_cmd(["dig", target, "SOA", "+short"], "")
+        if soa_result and not soa_result.startswith("[!]"):
+            soa_records = [line.strip() for line in soa_result.splitlines() if line.strip()]
+            if soa_records:
+                dns_info.append("SOA Records:")
+                for record in soa_records:
+                    dns_info.append(f"  {record}")
+                dns_json["soa_records"] = soa_records
+        elif args.soa:
+            dns_info.append("No SOA records found")
+    
+    if (args.cname or args.dns_info) and not is_ip(target):
+        cname_result = run_cmd(["dig", target, "CNAME", "+short"], "")
+        if cname_result and not cname_result.startswith("[!]") and cname_result.strip():
+            cname = cname_result.strip().rstrip('.')
+            dns_info.append(f"CNAME: {cname}")
+            dns_json["cname"] = cname
+            
+            current = cname
+            seen = {target.lower(), current.lower()}
+            chain = [f"{target} → {current}"]
+            
+            for _ in range(10):
+                next_result = run_cmd(["dig", current, "CNAME", "+short"], "")
+                if not next_result or next_result.startswith("[!]") or not next_result.strip():
+                    break
+                    
+                next_cname = next_result.strip().rstrip('.')
+                if not next_cname or next_cname.lower() in seen:
+                    break
+                    
+                seen.add(next_cname.lower())
+                chain.append(f"{current} → {next_cname}")
+                current = next_cname
+            
+            if len(chain) > 1:
+                dns_info.append("CNAME Chain:")
+                for link in chain:
+                    dns_info.append(f"  {link}")
+                dns_json["cname_chain"] = chain
+        elif args.cname:
+            dns_info.append("No CNAME records found")
+    
+    if (args.aaaa or args.dns_info) and not is_ip(target):
+        aaaa_result = run_cmd(["dig", target, "AAAA", "+short"], "")
+        if aaaa_result and not aaaa_result.startswith("[!]"):
+            aaaa_records = [line.strip() for line in aaaa_result.splitlines() if line.strip()]
+            if aaaa_records:
+                if len(aaaa_records) == 1:
+                    dns_info.append(f"AAAA Record: {aaaa_records[0]}")
+                    dns_json["aaaa_record"] = aaaa_records[0]
+                else:
+                    dns_info.append(f"AAAA Records:")
+                    for record in aaaa_records:
+                        dns_info.append(f"  {record}")
+                    dns_json["aaaa_records"] = aaaa_records
+            elif args.aaaa:
+                dns_info.append("No IPv6 (AAAA) records found")
+    
+    if is_ip(target):
+        dns_info.append("Target is an IP address, running reverse DNS lookup...")
+        ptr_result = run_cmd(["dig", "-x", target, "+short"], "")
+        ptr_record = ptr_result.strip().rstrip('.')
+        if ptr_record:
+            dns_info.append(f"PTR: {ptr_record}")
+            dns_json["ptr"] = ptr_record
+        else:
+            dns_info.append("No reverse DNS record found")
+    
+    return {"text": "\n".join(dns_info) or "[!] No DNS records found", "json": dns_json}
 
 def run_ping(target, count=4):
-    try:
-        result = subprocess.run(["ping", "-c", str(count), target], capture_output=True, text=True)
-        output = result.stdout
-        
-        latency_pattern = r"min/avg/max/mdev = [\d.]+/([\d.]+)/[\d.]+/[\d.]+"
-        latency_match = re.search(latency_pattern, output)
-        avg_latency = latency_match.group(1) if latency_match else "N/A"
-        
-        loss_pattern = r"(\d+)% packet loss"
-        loss_match = re.search(loss_pattern, output)
-        packet_loss = loss_match.group(1) if loss_match else "N/A"
-        
-        text_output = f"Count: {count}\nAverage Latency: {avg_latency}ms\nPacket Loss: {packet_loss}%"
-        
-        try:
-            latency_value = float(avg_latency)
-        except (ValueError, TypeError):
-            latency_value = None
-            
-        json_output = {
-            "count": count,
-            "avg_latency_ms": latency_value,
-            "packet_loss": f"{packet_loss}%"
-        }
-        
-        return {"text": text_output, "json": json_output}
-    except Exception as e:
-        error_msg = f"[!] Ping error: {str(e)}"
-        return {"text": error_msg, "json": {}}
+    result = run_cmd(["ping", "-c", str(count), target], "[!] Ping failed")
+    if result == "[!] Ping failed": return {"text": result, "json": {}}
+    
+    latency = re.search(r"min/avg/max/mdev = [\d.]+/([\d.]+)/[\d.]+/[\d.]+", result)
+    loss = re.search(r"(\d+)% packet loss", result)
+    
+    avg_latency = latency.group(1) if latency else "N/A"
+    packet_loss = loss.group(1) if loss else "N/A"
+    
+    text = f"Count: {count}\nAverage Latency: {avg_latency}ms\nPacket Loss: {packet_loss}%"
+    json_data = {
+        "count": count,
+        "avg_latency_ms": float(avg_latency) if avg_latency != "N/A" else None,
+        "packet_loss": f"{packet_loss}%"
+    }
+    
+    return {"text": text, "json": json_data}
 
 def get_http_headers(target):
-    headers_text = []
-    headers_json = {"http": {}, "https": {}}
+    headers_text, headers_json = [], {"http": {}, "https": {}}
+    ctx = ssl.create_default_context()
+    ctx.check_hostname, ctx.verify_mode = False, ssl.CERT_NONE
     
-    # Using curl -I for header retrieval
-    try:
-        # HTTP headers
-        http_result = subprocess.run(["curl", "-I", "-m", "5", f"http://{target}"], 
-                                    capture_output=True, text=True)
-        
-        http_headers = {}
-        if http_result.returncode == 0:
-            for line in http_result.stdout.splitlines():
-                if ': ' in line:
-                    key, value = line.split(': ', 1)
-                    http_headers[key.lower()] = value
-            headers_json["http"] = http_headers
-        else:
-            headers_json["http"] = {"error": "Failed to retrieve HTTP headers"}
-    except Exception as e:
-        headers_json["http"] = {"error": str(e)}
+    for protocol in ["http", "https"]:
+        try:
+            req = urllib.request.Request(f"{protocol}://{target}", method="HEAD")
+            with urllib.request.urlopen(req, timeout=5, context=ctx if protocol == "https" else None) as response:
+                headers = {k.lower(): v for k, v in response.info().items()}
+                headers_json[protocol] = headers
+        except Exception as e:
+            headers_json[protocol] = {"error": str(e)}
     
-    try:
-        # HTTPS headers
-        https_result = subprocess.run(["curl", "-I", "-m", "5", "-k", f"https://{target}"], 
-                                     capture_output=True, text=True)
-        
-        https_headers = {}
-        if https_result.returncode == 0:
-            for line in https_result.stdout.splitlines():
-                if ': ' in line:
-                    key, value = line.split(': ', 1)
-                    https_headers[key.lower()] = value
-            headers_json["https"] = https_headers
-        else:
-            headers_json["https"] = {"error": "Failed to retrieve HTTPS headers"}
-    except Exception as e:
-        headers_json["https"] = {"error": str(e)}
-    
-    # Combine headers from both HTTP and HTTPS
     all_headers = {}
-    all_headers.update(headers_json["http"])
-    if "error" not in headers_json["http"]:
-        all_headers.update(headers_json["https"])
+    for protocol in ["http", "https"]:
+        if "error" not in headers_json[protocol]:
+            all_headers.update(headers_json[protocol])
     
-    # Format the output
     for key, value in all_headers.items():
-        if key != "error":
-            headers_text.append(f"{key.title()}: {value}")
+        headers_text.append(f"{key.title()}: {value}")
     
-    if not headers_text and ("error" in headers_json["http"] or "error" in headers_json["https"]):
-        if "error" in headers_json["http"]:
-            headers_text.append(f"HTTP Error: {headers_json['http']['error']}")
-        if "error" in headers_json["https"]:
-            headers_text.append(f"HTTPS Error: {headers_json['https']['error']}")
+    if not headers_text:
+        for protocol in ["http", "https"]:
+            if "error" in headers_json[protocol]:
+                headers_text.append(f"{protocol.upper()} Error: {headers_json[protocol]['error']}")
     
-    return {
-        "text": "\n".join(headers_text),
-        "json": headers_json
-    }
+    return {"text": "\n".join(headers_text), "json": headers_json}
 
 args = parser.parse_args()
 target = args.target
-
 domain_info = target
 whois_result = run_whois(target)
 dns_result = run_dns(target)
-ping_result = run_ping(target, count=4)
-
-headers_result = None
-if args.headers:
-    headers_result = get_http_headers(target)
+ping_result = run_ping(target)
+headers_result = get_http_headers(target) if args.headers else None
 
 if args.json:
     json_data = {
@@ -298,9 +270,7 @@ if args.json:
         "whois": whois_result["json"]
     }
     
-    if args.headers and headers_result:
-        json_data["headers"] = headers_result["json"]
-    
+    if headers_result: json_data["headers"] = headers_result["json"]
     print(json.dumps(json_data, indent=None))
 else:
     target_type = "IP Address" if is_ip(target) else "Domain"
@@ -310,7 +280,7 @@ else:
     print(f"\n[DNS]\n{dns_result['text']}")
     print(f"\n[WHOIS]\n{whois_result['summary']}")
     
-    if args.headers and headers_result:
+    if headers_result:
         print(f"\n[HTTP Headers]\n{headers_result['text']}")
 
 if args.output:
@@ -324,9 +294,7 @@ if args.output:
             "whois": whois_result["json"]
         }
         
-        if args.headers and headers_result:
-            json_data["headers"] = headers_result["json"]
-            
+        if headers_result: json_data["headers"] = headers_result["json"]
         json_data["whois_raw"] = whois_result["raw"]
         
         with open(args.output, "w") as f:
@@ -339,7 +307,7 @@ if args.output:
         full_output += f"[DNS]\n{dns_result['text']}\n"
         full_output += f"[WHOIS]\n{whois_result['summary']}\n"
         
-        if args.headers and headers_result:
+        if headers_result:
             full_output += f"[HTTP Headers]\n{headers_result['text']}\n"
             
         full_output += f"[WHOIS Raw]\n{whois_result['raw']}"
