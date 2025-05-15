@@ -14,6 +14,9 @@ parser.add_argument("-t", "--target", required=True, help="Target domain name or
 parser.add_argument("-o", "--output", help="Save output to file")
 parser.add_argument("--json", action="store_true", help="Output in JSON format")
 parser.add_argument("--headers", action="store_true", help="Fetch and display HTTP response headers from the target")
+parser.add_argument("--mx", action="store_true", help="Retrieve MX (mail exchange) records for the domain")
+parser.add_argument("--txt", action="store_true", help="Retrieve TXT records for the domain")
+parser.add_argument("--spf", action="store_true", help="Retrieve SPF records for the domain")
 
 def is_ip(target):
     try:
@@ -119,7 +122,56 @@ def run_dns(target):
                 dns_info.append(f"NS: {ns_info}")
                 dns_json["nameservers"] = cleaned_ns
         
+        if args.mx and not is_ip(target):
+            mx_result = subprocess.run(["dig", target, "MX", "+short"], capture_output=True, text=True)
+            mx_records = mx_result.stdout.strip().split('\n')
+            cleaned_mx = []
+            
+            if any(mx_records):
+                for mx in mx_records:
+                    if mx:
+                        parts = mx.split(None, 1)
+                        if len(parts) > 1:
+                            mx_domain = parts[1].rstrip('.')
+                            cleaned_mx.append(mx_domain)
+                
+                if cleaned_mx:
+                    mx_info = ", ".join(cleaned_mx)
+                    dns_info.append(f"MX Records: {mx_info}")
+                    dns_json["mx_records"] = cleaned_mx
+        
+        if args.txt and not is_ip(target):
+            txt_result = subprocess.run(["dig", target, "TXT", "+short"], capture_output=True, text=True)
+            txt_records = txt_result.stdout.strip().split('\n')
+            cleaned_txt = []
+            
+            if any(txt_records):
+                for txt in txt_records:
+                    if txt:
+                        cleaned_txt.append(txt.strip('"'))
+                
+                if cleaned_txt:
+                    dns_info.append(f"TXT Records:")
+                    for record in cleaned_txt:
+                        dns_info.append(f"  {record}")
+                    dns_json["txt_records"] = cleaned_txt
+        
+        if args.spf and not is_ip(target):
+            spf_result = subprocess.run(["dig", target, "TXT", "+short"], capture_output=True, text=True)
+            spf_records = []
+            
+            for line in spf_result.stdout.strip().split('\n'):
+                if 'v=spf1' in line.lower():
+                    spf_records.append(line.strip('"'))
+            
+            if spf_records:
+                dns_info.append(f"SPF Records:")
+                for record in spf_records:
+                    dns_info.append(f"  {record}")
+                dns_json["spf_records"] = spf_records
+        
         if is_ip(target):
+            dns_info.append("Target is an IP address, running reverse DNS lookup...")
             ptr_result = subprocess.run(["dig", "-x", target, "+short"], capture_output=True, text=True)
             ptr_record = ptr_result.stdout.strip().rstrip('.')
             if ptr_record:
