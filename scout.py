@@ -3,19 +3,17 @@
 import subprocess
 import argparse
 import ipaddress
+import re
 
 parser = argparse.ArgumentParser(description="Scout - Basic Recon Tool")
 
 # Arguments
 # Target (IP or Domain)
 parser.add_argument("-t", "--target", required=True, help="Target domain name or IP address")
-# Full Scan
-parser.add_argument("-f", "--full", action="store_true", help="Run a full scan")
 # Output to File
 parser.add_argument("-o", "--output", help="Save output to file")
 
 # Functions
-
 # Check if target is an IP
 def is_ip(target):
     try:
@@ -24,179 +22,142 @@ def is_ip(target):
     except ValueError:
         return False
 
-# WHOIS
+# WHOIS with both raw data and summary
 def run_whois(target):
     try:
         result = subprocess.run(["whois", target], capture_output=True, text=True)
         if result.returncode != 0:
-            return f"[!] WHOIS command failed: {result.stderr}"
-    except subprocess.TimeoutExpired:
-        return f"[!] WHOIS timed out"
+            return {"raw": f"[!] WHOIS command failed: {result.stderr}", "summary": "[!] WHOIS command failed"}
+        
+        # Get raw output
+        raw_output = result.stdout
+        
+        # Extract key information for summary
+        whois_summary = {}
+        
+        for line in raw_output.splitlines():
+            line = line.strip()
+            if not line or ":" not in line:
+                continue
+            
+            key, value = line.split(":", 1)
+            key = key.strip().lower()
+            value = value.strip()
+            
+            if not value:
+                continue
+            
+            # Extract registrant/owner information
+            if key.startswith("registrant org") or key.startswith("registrant organization"):
+                whois_summary['registrant'] = value
+            
+            # Creation date
+            elif any(term in key for term in ["creation date", "created"]):
+                whois_summary['created'] = value
+            
+            # Expiration date
+            elif any(term in key for term in ["expiry date", "expiration date"]):
+                whois_summary['expires'] = value
+            
+            # Registrar
+            elif key == "registrar":
+                whois_summary['registrar'] = value
+        
+        # Format summary output
+        summary_lines = []
+        if 'registrant' in whois_summary:
+            summary_lines.append(f"Registered To: {whois_summary['registrant']}")
+        if 'created' in whois_summary:
+            summary_lines.append(f"Created: {whois_summary['created']}")
+        if 'expires' in whois_summary:
+            summary_lines.append(f"Expires: {whois_summary['expires']}")
+        if 'registrar' in whois_summary:
+            summary_lines.append(f"Registrar: {whois_summary['registrar']}")
+        
+        summary_output = "\n".join(summary_lines) if summary_lines else "[!] No WHOIS summary information found"
+        
+        return {"raw": raw_output, "summary": summary_output}
     except Exception as e:
-        return f"[!] WHOIS error: {str(e)}"
-    
-    # Data structure to organize the WHOIS information
-    data = {
-        'domain': '',
-        'created': '',
-        'updated': '',
-        'expires': '',
-        'registrar': '',
-        'registrar_email': '',
-        'registrar_phone': '',
-        'owner': '',
-        'owner_email': '',
-        'owner_phone': '',
-        'owner_address': '',
-        'nameservers': [],
-        'dnssec': ''
-    }
-    
-    # Extract information from WHOIS output
-    for line in result.stdout.splitlines():
-        line = line.strip()
-        if not line or ":" not in line:
-            continue
-        
-        key, value = line.split(":", 1)
-        key = key.strip().lower()
-        value = value.strip()
-        
-        if not value:
-            continue
-            
-        if key.startswith("domain name"):
-            data['domain'] = value
-        
-        elif any(c in key for c in ["creation date", "created"]):
-            data['created'] = value
-        elif "updated date" in key:
-            data['updated'] = value
-        elif any(e in key for e in ["expiry date", "expiration date"]):
-            data['expires'] = value
-            
-        elif key == "registrar":
-            data['registrar'] = value
-        elif "registrar abuse contact email" in key:
-            data['registrar_email'] = value
-        elif "registrar abuse contact phone" in key:
-            data['registrar_phone'] = value
-            
-        elif "registrant organization" in key or "registrant org" in key:
-            data['owner'] = value
-        elif "registrant email" in key:
-            data['owner_email'] = value
-        elif "registrant phone" in key:
-            data['owner_phone'] = value
-        elif "registrant street" in key:
-            address_parts = [value]
-            data['owner_address'] = value
-            
-        elif "registrant city" in key and 'owner_address' in data:
-            data['owner_address'] += f", {value}"
-        elif ("registrant state" in key or "registrant province" in key) and 'owner_address' in data:
-            data['owner_address'] += f", {value}"
-        elif ("registrant postal" in key or "registrant zip" in key) and 'owner_address' in data:
-            data['owner_address'] += f" {value}"
-        elif "registrant country" in key and 'owner_address' in data:
-            data['owner_address'] += f", {value}"
-            
-        elif "name server" in key:
-            if value.lower() not in [ns.lower() for ns in data['nameservers']]:
-                data['nameservers'].append(value)
-                
-        elif key == "dnssec":
-            data['dnssec'] = value
-    
-    # Format the output
-    output = []
-    if data['domain']:
-        output.append(f"Domain:         {data['domain']}")
-    if data['created']:
-        output.append(f"Created:        {data['created']}")
-    if data['updated']:
-        output.append(f"Updated:        {data['updated']}")
-    if data['expires']:
-        output.append(f"Expires:        {data['expires']}")
-    if data['registrar']:
-        output.append(f"Registrar:      {data['registrar']}")
-    if data['registrar_email']:
-        output.append(f"Registrar Email:{data['registrar_email']}")
-    if data['registrar_phone']:
-        output.append(f"Registrar Phone:{data['registrar_phone']}")
-    if data['owner']:
-        output.append(f"Owner:          {data['owner']}")
-    if data['owner_email']:
-        output.append(f"Owner Email:    {data['owner_email']}")
-    if data['owner_phone']:
-        output.append(f"Owner Phone:    {data['owner_phone']}")
-    if data['owner_address']:
-        output.append(f"Owner Address:  {data['owner_address']}")
-    
-    # Add nameservers
-    if data['nameservers']:
-        ns_lines = [f"Nameservers:    {data['nameservers'][0]}"]
-        for ns in data['nameservers'][1:]:
-            ns_lines.append(f"                {ns}")
-        output.extend(ns_lines)
-    
-    if data['dnssec']:
-        output.append(f"DNSSEC:         {data['dnssec']}")
-    
-    if not output:
-        return "[!] No useful WHOIS information found"
-    
-    return "\n".join(output)
+        return {"raw": f"[!] WHOIS error: {str(e)}", "summary": f"[!] WHOIS error: {str(e)}"}
 
-# Dig
-def run_dig(target):
-    # For IPs, do a reverse lookup instead
-    if is_ip(target):
-        result = subprocess.run(["dig", "-x", target, "+short"], capture_output=True, text=True)
-        if not result.stdout.strip():
-            return "[!] No reverse DNS records found"
-        return result.stdout
-    else:
-        # For domains, do a forward lookup
-        result = subprocess.run(["dig", target, "+short"], capture_output=True, text=True)
-        if not result.stdout.strip():
-            return "[!] No DNS records found"
-        return result.stdout
-    
-# Ping
-def run_ping(target):
-    result = subprocess.run(["ping", "-c", "4", target], capture_output=True, text=True)
-    return result.stdout
+# DNS lookup
+def run_dns(target):
+    try:
+        dns_info = []
+        
+        # Get A records (IPv4 addresses)
+        a_result = subprocess.run(["dig", target, "A", "+short"], capture_output=True, text=True)
+        a_records = a_result.stdout.strip().split('\n')
+        a_records = [r for r in a_records if r and not r.endswith('.')]  # Filter out CNAME pointers
+        if a_records:
+            dns_info.append(f"A Record: {a_records[0]}")
+            for record in a_records[1:]:
+                if record:
+                    dns_info.append(f"          {record}")
+        
+        # Get nameservers
+        ns_result = subprocess.run(["dig", target, "NS", "+short"], capture_output=True, text=True)
+        ns_records = ns_result.stdout.strip().split('\n')
+        if any(ns_records):
+            cleaned_ns = [ns.rstrip('.') for ns in ns_records if ns]
+            ns_info = ", ".join(cleaned_ns)
+            dns_info.append(f"NS: {ns_info}")
+        
+        # If target is an IP, get reverse DNS
+        if is_ip(target):
+            ptr_result = subprocess.run(["dig", "-x", target, "+short"], capture_output=True, text=True)
+            ptr_record = ptr_result.stdout.strip().rstrip('.')
+            if ptr_record:
+                dns_info.append(f"PTR: {ptr_record}")
+        
+        return "\n".join(dns_info) if dns_info else "[!] No DNS records found"
+    except Exception as e:
+        return f"[!] DNS lookup error: {str(e)}"
+
+# Ping and analyze results
+def run_ping(target, count=4):
+    try:
+        result = subprocess.run(["ping", "-c", str(count), target], capture_output=True, text=True)
+        output = result.stdout
+        
+        # Extract latency
+        latency_pattern = r"min/avg/max/mdev = [\d.]+/([\d.]+)/[\d.]+/[\d.]+"
+        latency_match = re.search(latency_pattern, output)
+        avg_latency = latency_match.group(1) if latency_match else "N/A"
+        
+        # Extract packet loss
+        loss_pattern = r"(\d+)% packet loss"
+        loss_match = re.search(loss_pattern, output)
+        packet_loss = loss_match.group(1) if loss_match else "N/A"
+        
+        return f"Count: {count}\nAverage Latency: {avg_latency}ms\nPacket Loss: {packet_loss}%"
+    except Exception as e:
+        return f"[!] Ping error: {str(e)}"
 
 # Parse arguments
 args = parser.parse_args()
 target = args.target
 
-# Detect if target is an IP address or domain
-target_is_ip = is_ip(target)
-target_type = "IP address" if target_is_ip else "domain"
+# Get all information but store it in variables
+domain_info = target
+whois_result = run_whois(target)  # Now returns a dictionary with raw and summary
+dns_info = run_dns(target)
+ping_info = run_ping(target, count=4)
 
-print(f"\nTarget {target_type}: {target}")
-print("\n=== WHOIS INFO ===")
-print(run_whois(target))
+# Display domain info, ping, DNS, and WHOIS summary sections
+print(f"[Domain Info]\n{domain_info}")
+print(f"\n[Ping]\n{ping_info}")
+print(f"\n[DNS]\n{dns_info}")
+print(f"\n[WHOIS]\n{whois_result['summary']}")
 
-# Use dig appropriately for IP or domain
-print(f"\n=== {'REVERSE DNS' if target_is_ip else 'DNS INFO'} ===")
-print(run_dig(target))
-
-if args.full:
-    print("\n=== PING INFO ===")
-    print(run_ping(target))
-
-# Save to file if requested
+# Save complete information to file if requested
 if args.output:
+    full_output = f"[Domain Info]\n{domain_info}\n"
+    full_output += f"[Ping]\n{ping_info}\n"
+    full_output += f"[DNS]\n{dns_info}\n"
+    full_output += f"[WHOIS]\n{whois_result['summary']}\n"
+    full_output += f"[WHOIS Raw]\n{whois_result['raw']}"
+    
     with open(args.output, "w") as f:
-        f.write(f"Target {target_type}: {target}\n\n")
-        f.write("=== WHOIS INFO ===\n")
-        f.write(run_whois(target))
-        f.write(f"\n=== {'REVERSE DNS' if target_is_ip else 'DNS INFO'} ===\n")
-        f.write(run_dig(target))
-        if args.full:
-            f.write("\n=== PING INFO ===\n")
-            f.write(run_ping(target))
-    print(f"\nResults saved to {args.output}")
+        f.write(full_output)
+    print(f"\nComplete results saved to {args.output}")
